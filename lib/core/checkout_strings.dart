@@ -111,6 +111,14 @@ const Map<String, Map<String, String>> checkoutStrings = {
   'en': 'Yes, Cancel',
   'te': 'అవును, రద్దు చేయండి',
 },
+'slotUnavailable': {
+  'en': 'This slot is unavailable',
+  'te': 'ఈ సమయం అందుబాటులో లేదు',
+},
+'kitchenIsOpen': {
+  'en': 'Kitchen is open',
+  'te': 'వంటగది తెరిచి ఉంది',
+},
   'processingTitle': {'en': 'Processing payment', 'te': 'చెల్లింపు ప్రాసెస్ అవుతోంది'},
   'stepBank': {'en': 'Contacting your bank', 'te': 'మీ బ్యాంక్‌ను సంప్రదిస్తోంది'},
   'stepConfirm': {'en': 'Confirming payment', 'te': 'చెల్లింపును నిర్ధారిస్తోంది'},

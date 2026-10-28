@@ -32,6 +32,8 @@ const String kProductsPath = '/api/admin/products';
 
 /// Kitchen hours API
 const String kHoursPath = '/api/admin/settings/hours';
+const String kPreorderScheduleDayPath =
+    '/api/admin/preorder-schedule/day';
 
 /// Use sample kitchen hours when true.
 const bool kUseMockHours = false;

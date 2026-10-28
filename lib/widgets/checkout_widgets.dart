@@ -115,6 +115,9 @@ class SelectChip extends StatelessWidget {
   final bool expand;
   final IconData? icon;
   final double fontSize;
+  final bool enabled;
+  final String? tooltip;
+
   const SelectChip({
     super.key,
     required this.label,
@@ -123,40 +126,71 @@ class SelectChip extends StatelessWidget {
     this.expand = true,
     this.icon,
     this.fontSize = 14,
+    this.enabled = true,
+    this.tooltip,
   });
 
   @override
   Widget build(BuildContext context) {
-    final fg = selected ? Colors.white : kNavy;
-    return TapCursor(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        height: 46,
-        padding: EdgeInsets.symmetric(horizontal: expand ? 6 : 18),
-        decoration: BoxDecoration(
-          color: selected ? kNavy : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: selected ? kNavy : kBorder, width: 1.4),
-        ),
-        child: Row(
-          mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 18, color: fg),
-              if (label.isNotEmpty) const SizedBox(width: 6),
-            ],
-            if (label.isNotEmpty)
-              Flexible(
-                child: Text(label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+    final background = !enabled
+        ? const Color(0xFFF0EFED)
+        : selected
+            ? kNavy
+            : Colors.white;
+
+    final foreground = !enabled
+        ? const Color(0xFF99958F)
+        : selected
+            ? Colors.white
+            : kNavy;
+
+    final borderColor = !enabled
+        ? const Color(0xFFD9D5CF)
+        : selected
+            ? kNavy
+            : kBorder;
+
+    return Opacity(
+      opacity: enabled ? 1 : 0.75,
+      child: Tooltip(
+        message: tooltip ?? '',
+        child: TapCursor(
+          onTap: enabled ? onTap : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            height: 46,
+            padding: EdgeInsets.symmetric(horizontal: expand ? 6 : 18),
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: borderColor,
+                width: selected ? 1.6 : 1.2,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 18, color: foreground),
+                  if (label.isNotEmpty) const SizedBox(width: 6),
+                ],
+                if (label.isNotEmpty)
+                  Flexible(
+                    child: Text(
+                      label,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         fontSize: fontSize,
                         fontWeight: FontWeight.w700,
-                        color: fg)),
-              ),
-          ],
+                        color: foreground,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -402,34 +436,48 @@ class DateChip extends StatelessWidget {
     );
   }
 }
-
-/// Small peach info box (pre-order messages).
 class PreOrderNote extends StatelessWidget {
   final String text;
   final bool showIcon;
-  const PreOrderNote({super.key, required this.text, this.showIcon = true});
+
+  const PreOrderNote({
+    super.key,
+    required this.text,
+    this.showIcon = true,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFFFDE8DD),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFFF4C7A7),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (showIcon) ...[
-            const Icon(Icons.event_available_outlined,
-                size: 20, color: Color(0xFFB23A12)),
+            const Icon(
+              Icons.schedule,
+              color: Color(0xFFB23A12),
+            ),
             const SizedBox(width: 10),
           ],
           Expanded(
-            child: Text(text,
-                style: const TextStyle(
-                    fontSize: 13.5, height: 1.35, color: Color(0xFF9A3412))),
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 13.5,
+                height: 1.35,
+                color: Color(0xFF9A3412),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
         ],
       ),

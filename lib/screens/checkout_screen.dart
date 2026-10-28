@@ -1,4 +1,3 @@
-
 import 'dart:async';
 
 import '../widgets/tap_cursor.dart';
@@ -22,6 +21,7 @@ import '../widgets/checkout_widgets.dart';
 import 'add_address_screen.dart';
 import 'processing_screen.dart';
 import 'name_screen.dart';
+import '../services/preorder_schedule_service.dart';
 
 const kPackingFee = 30;
 const kDeliveryFee = 40;
@@ -52,7 +52,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   // 2. how
   bool _delivery = false;
-  
 
   // 3. when
   bool _orderNow = true;
@@ -67,6 +66,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _hoursLoading = false;
   String? _hoursError;
   int _hoursToken = 0; // ignores late answers for a date the user already left
+  final _scheduleService = PreorderScheduleService();
+
+  PreorderSchedule? _schedule;
+  bool _scheduleLoading = false;
+  String? _scheduleError;
 
   // 4. payment
   int _payTab = 0; // 0 UPI, 1 Card, 2 Netbanking
@@ -130,8 +134,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool get _phoneValid => RegExp(r'^[6-9]\d{9}$').hasMatch(_phone.text);
 
   /// Any preorder-only size forces preorder. Hundi alone requires tomorrow.
- bool get _preOnly =>
-    context.read<CartProvider>().hasPreOrderOnlyItems;
+  bool get _preOnly => context.read<CartProvider>().hasPreOrderOnlyItems;
   bool get _hundiInCart => context.read<CartProvider>().hasHundiItem;
   bool get _preOrderOnlyInCart =>
       context.read<CartProvider>().hasPreOrderOnlyItems;
@@ -168,16 +171,32 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     if (_name.text.trim().isEmpty) return 'reqName';
     if (!_phoneValid) return 'reqPhone';
     if (!_verified) return 'reqVerify';
+
     if (_delivery && context.read<AuthProvider>().selectedAddress == null) {
       return 'reqAddress';
     }
+
     if (!_orderNow) {
-      if (_hoursLoading || _hoursError != null || _hours == null)
+      if (_hoursLoading ||
+          _scheduleLoading ||
+          _hoursError != null ||
+          _scheduleError != null ||
+          _hours == null ||
+          _schedule == null) {
         return 'reqSlot';
-      if (!_hours!.isOpen) return 'kitchenClosed';
-      if (_slot == null) return 'reqSlot';
+      }
+
+      if (!_hours!.isOpen || _schedule!.closed) {
+        return 'kitchenClosed';
+      }
+
+      if (_slot == null || !_isSlotSelectable(_slot!)) {
+        return 'reqSlot';
+      }
     }
+
     if (!_paymentValid) return 'reqPayment';
+
     return null;
   }
 
@@ -198,223 +217,221 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       ..showSnackBar(SnackBar(content: Text(_t(key))));
   }
 
- Future<void> _sendOtp() async {
-  FocusScope.of(context).unfocus();
+  Future<void> _sendOtp() async {
+    FocusScope.of(context).unfocus();
 
-  if (!_phoneValid) {
-    setState(() => _phoneTried = true);
-    return;
-  }
+    if (!_phoneValid) {
+      setState(() => _phoneTried = true);
+      return;
+    }
 
-  setState(() {
-    _otpState = _Otp.sending;
-    _otpError = null;
-  });
+    setState(() {
+      _otpState = _Otp.sending;
+      _otpError = null;
+    });
 
-  try {
-    await _authService.sendOtp(_phone.text.trim());
-  } on ApiException catch (e) {
-    if (!mounted) return;
+    try {
+      await _authService.sendOtp(_phone.text.trim());
+    } on ApiException catch (e) {
+      if (!mounted) return;
 
-    setState(() => _otpState = _Otp.idle);
-    _toast(e.status == 429 ? 'tooManyAttempts' : 'otpSendFailed');
-    return;
-  } catch (e) {
-    if (!mounted) return;
+      setState(() => _otpState = _Otp.idle);
+      _toast(e.status == 429 ? 'tooManyAttempts' : 'otpSendFailed');
+      return;
+    } catch (e) {
+      if (!mounted) return;
 
-    debugPrint('Checkout OTP send failed: $e');
-    setState(() => _otpState = _Otp.idle);
-    _toast('otpSendFailed');
-    return;
-  }
-
-  if (!mounted) return;
-
-  _otp.clear();
-  _startTimer();
-
-  setState(() {
-    _otpState = _Otp.sent;
-    _otpError = null;
-  });
-}
-  
-Future<void> _checkOtp() async {
-  if (_otpState == _Otp.verifying) return;
-
-  final phone = _phone.text.trim();
-  final otp = _otp.text.trim();
-
-  if (!RegExp(r'^[6-9]\d{9}$').hasMatch(phone)) {
-    setState(() => _phoneTried = true);
-    return;
-  }
-
-  if (otp.length != 4) return;
-
-  FocusScope.of(context).unfocus();
-
-  setState(() {
-    _otpState = _Otp.verifying;
-    _otpError = null;
-  });
-
-  try {
-    // First, try verifying the OTP for an existing customer.
-    var result = await _authService.verifyOtp(phone, otp);
+      debugPrint('Checkout OTP send failed: $e');
+      setState(() => _otpState = _Otp.idle);
+      _toast('otpSendFailed');
+      return;
+    }
 
     if (!mounted) return;
 
-    // A new customer needs to provide their profile details.
-    if (result.status == VerifyStatus.needsProfile) {
-      VerifyResult? profileVerification;
+    _otp.clear();
+    _startTimer();
 
-      final profile = await Navigator.push<ProfileDetails>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => NameScreen(
-  phone: phone,
-  initialName: _name.text.trim(),
-  onSubmitProfile: (profile) async {
-            final verification = await _authService.verifyOtp(
-  phone,
-  otp,
-  name: profile.name.trim(),
-  gender: profile.gender,
-  email: profile.email,
-  isRegistration: true,
-);
+    setState(() {
+      _otpState = _Otp.sent;
+      _otpError = null;
+    });
+  }
 
-              profileVerification = verification;
-              return verification;
-            },
-          ),
-        ),
-      );
+  Future<void> _checkOtp() async {
+    if (_otpState == _Otp.verifying) return;
+
+    final phone = _phone.text.trim();
+    final otp = _otp.text.trim();
+
+    if (!RegExp(r'^[6-9]\d{9}$').hasMatch(phone)) {
+      setState(() => _phoneTried = true);
+      return;
+    }
+
+    if (otp.length != 4) return;
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _otpState = _Otp.verifying;
+      _otpError = null;
+    });
+
+    try {
+      // First, try verifying the OTP for an existing customer.
+      var result = await _authService.verifyOtp(phone, otp);
 
       if (!mounted) return;
 
-      // The user cancelled profile registration.
-      if (profile == null) {
-        setState(() {
-          _otpState = _Otp.sent;
-          _otpError = null;
-        });
-        return;
+      // A new customer needs to provide their profile details.
+      if (result.status == VerifyStatus.needsProfile) {
+        VerifyResult? profileVerification;
+
+        final profile = await Navigator.push<ProfileDetails>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => NameScreen(
+              phone: phone,
+              initialName: _name.text.trim(),
+              onSubmitProfile: (profile) async {
+                final verification = await _authService.verifyOtp(
+                  phone,
+                  otp,
+                  name: profile.name.trim(),
+                  gender: profile.gender,
+                  email: profile.email,
+                  isRegistration: true,
+                );
+
+                profileVerification = verification;
+                return verification;
+              },
+            ),
+          ),
+        );
+
+        if (!mounted) return;
+
+        // The user cancelled profile registration.
+        if (profile == null) {
+          setState(() {
+            _otpState = _Otp.sent;
+            _otpError = null;
+          });
+          return;
+        }
+
+        // Use the result returned by the profile verification callback.
+        result =
+            profileVerification ??
+            const VerifyResult(
+              VerifyStatus.error,
+              message: 'Verification failed. Please try again.',
+            );
+
+        if (result.ok) {
+          result = result.withProfile(profile);
+        }
       }
 
-      // Use the result returned by the profile verification callback.
-      result = profileVerification ??
-          const VerifyResult(
-            VerifyStatus.error,
-            message: 'Verification failed. Please try again.',
-          );
+      if (!mounted) return;
 
       if (result.ok) {
-        result = result.withProfile(profile);
+        _timer?.cancel();
+
+        final auth = context.read<AuthProvider>();
+
+        // Prefer the name returned by the backend.
+        // If it is empty, reuse the name entered during checkout.
+        final checkoutName = _name.text.trim();
+
+        final verifiedName = (result.name?.trim().isNotEmpty ?? false)
+            ? result.name!.trim()
+            : checkoutName;
+
+        if (verifiedName.isEmpty) {
+          setState(() {
+            _otpState = _Otp.sent;
+            _otpError = 'Please enter your name.';
+          });
+          return;
+        }
+        debugPrint(
+          'OTP result has customer ID: '
+          '${result.customerId?.isNotEmpty == true}',
+        );
+        debugPrint(
+          'OTP result has token: '
+          '${result.token?.isNotEmpty == true}',
+        );
+        // Save the authenticated customer and backend token.
+        auth.register(
+          verifiedName,
+          phone,
+          gender: result.gender ?? '',
+          email: result.email ?? '',
+          token: result.token,
+          customerId: result.customerId,
+        );
+
+        debugPrint(
+          'AuthProvider has customer ID: '
+          '${auth.customerId.isNotEmpty}',
+        );
+        debugPrint(
+          'AuthProvider has token: '
+          '${auth.token.isNotEmpty}',
+        );
+
+        setState(() {
+          _name.text = verifiedName;
+          _verifiedPhone = phone;
+          _otpState = _Otp.idle;
+          _otpError = null;
+        });
+
+        FocusScope.of(context).unfocus();
+      } else {
+        // Preserve a useful backend message rather than hiding it.
+        final message = result.message?.trim() ?? '';
+
+        setState(() {
+          _otpState = _Otp.sent;
+          _otpError = message.isNotEmpty
+              ? message
+              : _t(
+                  result.status == VerifyStatus.tooMany
+                      ? 'tooManyAttempts'
+                      : result.status == VerifyStatus.wrongCode
+                      ? 'wrongCode'
+                      : 'otpVerifyFailed',
+                );
+        });
       }
-    }
+    } on ApiException catch (e) {
+      if (!mounted) return;
 
-    if (!mounted) return;
-
-if (result.ok) {
-  _timer?.cancel();
-
-  final auth = context.read<AuthProvider>();
-
-  // Prefer the name returned by the backend.
-  // If it is empty, reuse the name entered during checkout.
- final checkoutName = _name.text.trim();
-
-final verifiedName = (result.name?.trim().isNotEmpty ?? false)
-    ? result.name!.trim()
-    : checkoutName;
-
-if (verifiedName.isEmpty) {
-  setState(() {
-    _otpState = _Otp.sent;
-    _otpError = 'Please enter your name.';
-  });
-  return;
-}
-debugPrint(
-  'OTP result has customer ID: '
-  '${result.customerId?.isNotEmpty == true}',
-);
-debugPrint(
-  'OTP result has token: '
-  '${result.token?.isNotEmpty == true}',
-);
-  // Save the authenticated customer and backend token.
-  auth.register(
-    verifiedName,
-    phone,
-    gender: result.gender ?? '',
-    email: result.email ?? '',
-    token: result.token,
-     customerId: result.customerId,
-  );
-
-debugPrint(
-  'AuthProvider has customer ID: '
-  '${auth.customerId.isNotEmpty}',
-);
-debugPrint(
-  'AuthProvider has token: '
-  '${auth.token.isNotEmpty}',
-);
-
-  setState(() {
-    _name.text = verifiedName;
-    _verifiedPhone = phone;
-    _otpState = _Otp.idle;
-    _otpError = null;
-  });
-
-  FocusScope.of(context).unfocus();
-}
-else {
-      // Preserve a useful backend message rather than hiding it.
-      final message = result.message?.trim() ?? '';
+      debugPrint('Checkout OTP API error: ${e.status ?? 'unknown'}');
 
       setState(() {
         _otpState = _Otp.sent;
-        _otpError = message.isNotEmpty
-            ? message
-            : _t(
-                result.status == VerifyStatus.tooMany
-                    ? 'tooManyAttempts'
-                    : result.status == VerifyStatus.wrongCode
-                        ? 'wrongCode'
-                        : 'otpVerifyFailed',
-              );
+        _otpError = e.status == 429
+            ? _t('tooManyAttempts')
+            : (e.message.isNotEmpty ? e.message : _t('otpVerifyFailed'));
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      // Do not print OTPs or authentication tokens.
+      debugPrint('Checkout OTP verification failed: $e');
+
+      setState(() {
+        _otpState = _Otp.sent;
+        _otpError = _t('otpVerifyFailed');
       });
     }
-  } on ApiException catch (e) {
-    if (!mounted) return;
-
-    debugPrint('Checkout OTP API error: ${e.status ?? 'unknown'}');
-
-    setState(() {
-      _otpState = _Otp.sent;
-      _otpError = e.status == 429
-          ? _t('tooManyAttempts')
-          : (e.message.isNotEmpty
-              ? e.message
-              : _t('otpVerifyFailed'));
-    });
-  } catch (e) {
-    if (!mounted) return;
-
-    // Do not print OTPs or authentication tokens.
-    debugPrint('Checkout OTP verification failed: $e');
-
-    setState(() {
-      _otpState = _Otp.sent;
-      _otpError = _t('otpVerifyFailed');
-    });
   }
-}
 
   // ---------------- schedule ----------------
   /// 840 -> "2 PM", 870 -> "2:30 PM" (used inside slot labels)
@@ -449,66 +466,111 @@ else {
   /// Generate 1-hour slots using backend kitchen hours.
   /// For today, preorder-only items (including Hundi) require
   /// at least 2 hours' notice. Normal preorder keeps 45 minutes.
- 
-List<int> _slotsFor(KitchenHours h) {
-  final open = h.openMinutes;
-  final close = h.closeMinutes;
 
-  if (!h.isOpen || open == null || close == null || close <= open) {
-    return const [];
+  List<int> _slotsFor(KitchenHours h) {
+    final open = h.openMinutes;
+    final close = h.closeMinutes;
+
+    if (!h.isOpen || open == null || close == null || close <= open) {
+      return const [];
+    }
+
+    final now = DateTime.now();
+    final isToday = DateUtils.isSameDay(_date, now);
+
+    // Only today's slots need a minimum lead time.
+    final int leadMinutes = _preOrderOnlyInCart ? 120 : 0;
+
+    final int earliest;
+    if (isToday) {
+      final nowMinutes = now.hour * 60 + now.minute;
+      final requiredMinutes = nowMinutes + leadMinutes;
+
+      // Round UP to the next full-hour slot boundary.
+      earliest = ((requiredMinutes + 59) ~/ 60) * 60;
+    } else {
+      earliest = open;
+    }
+
+    final slots = <int>[];
+
+    // Generate complete one-hour slots within kitchen hours.
+    for (int start = open; start + 60 <= close; start += 60) {
+      if (start < earliest) continue;
+      slots.add(start);
+    }
+
+    return slots;
   }
 
-  final now = DateTime.now();
-  final isToday = DateUtils.isSameDay(_date, now);
+  List<int> _availableSlotsFor(KitchenHours hours) {
+    final schedule = _schedule;
 
-  // Only today's slots need a minimum lead time.
-  final int leadMinutes = _preOrderOnlyInCart ? 120 : 0;
+    if (schedule == null || schedule.closed) {
+      return const [];
+    }
 
-  final int earliest;
-  if (isToday) {
-    final nowMinutes = now.hour * 60 + now.minute;
-    final requiredMinutes = nowMinutes + leadMinutes;
+    final generated = _slotsFor(hours);
 
-    // Round UP to the next full-hour slot boundary.
-    earliest = ((requiredMinutes + 59) ~/ 60) * 60;
-  } else {
-    earliest = open;
+    return generated.where(_isSlotSelectable).toList();
   }
-
-  final slots = <int>[];
-
-  // Generate complete one-hour slots within kitchen hours.
-  for (int start = open; start + 60 <= close; start += 60) {
-    if (start < earliest) continue;
-    slots.add(start);
-  }
-
-  return slots;
-}
-
 
   /// Fetch the kitchen hours for the selected date. Clears the chosen slot.
+
+  bool _isSlotSelectable(int startMinutes) {
+    final schedule = _schedule;
+    if (schedule == null) return false;
+
+    final key =
+        '${(startMinutes ~/ 60).toString().padLeft(2, '0')}:'
+        '${(startMinutes % 60).toString().padLeft(2, '0')}';
+
+    return schedule.slots[key]?.isAvailable ?? false;
+  }
+
   Future<void> _loadHours() async {
-    final date = _date;
     final token = ++_hoursToken;
+    final date = _date;
+
     setState(() {
       _hoursLoading = true;
-      _hoursError = null;
+      _scheduleLoading = true;
+
       _hours = null;
+      _schedule = null;
+
+      _hoursError = null;
+      _scheduleError = null;
+
       _slot = null;
     });
+
     try {
-      final h = await _hoursService.fetch(date);
+      final results = await Future.wait([
+        _hoursService.fetch(date),
+        _scheduleService.fetch(date),
+      ]);
+
       if (!mounted || token != _hoursToken) return;
+
       setState(() {
-        _hours = h;
+        _hours = results[0] as KitchenHours;
+        _schedule = results[1] as PreorderSchedule;
+
         _hoursLoading = false;
+        _scheduleLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted || token != _hoursToken) return;
+
+      debugPrint('Failed loading schedule: $e');
+
       setState(() {
-        _hoursError = _t('hoursError');
         _hoursLoading = false;
+        _scheduleLoading = false;
+
+        _hoursError = _t('hoursError');
+        _scheduleError = _t('hoursError');
       });
     }
   }
@@ -596,7 +658,6 @@ List<int> _slotsFor(KitchenHours h) {
     final auth = context.read<AuthProvider>();
     final fee = _delivery ? kDeliveryFee : 0;
     final total = cart.totalPrice + kPackingFee + fee;
-    
 
     const upiNames = {
       'gpay': 'Google Pay',
@@ -616,46 +677,40 @@ List<int> _slotsFor(KitchenHours h) {
       detail = _bank ?? '';
     }
 
-final draft = Order(
-  id: '', // Filled in once the kitchen confirms
-  orderNumber: '', // Assigned when the order number is available
+    final draft = Order(
+      id: '', // Filled in once the kitchen confirms
+      orderNumber: '', // Assigned when the order number is available
 
-  lines: [
-    for (final it in cart.items)
-      OrderLine(
-        dish: it.dish,
-        option: it.option,
-        qty: it.qty,
-      ),
-  ],
+      lines: [
+        for (final it in cart.items)
+          OrderLine(dish: it.dish, option: it.option, qty: it.qty),
+      ],
 
-  subtotal: cart.totalPrice,
-  packing: kPackingFee,
-  deliveryFee: fee,
-  total: total,
+      subtotal: cart.totalPrice,
+      packing: kPackingFee,
+      deliveryFee: fee,
+      total: total,
 
-  // Pickup or delivery
-  isDelivery: _delivery,
+      // Pickup or delivery
+      isDelivery: _delivery,
 
-  // Order Now or Pre-order
-  isOrderNow: _orderNow,
+      // Order Now or Pre-order
+      isOrderNow: _orderNow,
 
-  whenText: _whenText(),
-  scheduledAt: _scheduledAt(),
+      whenText: _whenText(),
+      scheduledAt: _scheduledAt(),
 
-  // Include the saved address ID only for delivery
-  address: _delivery
-      ? auth.addresses[auth.selectedAddress!].line
-      : null,
-  deliveryAddressId: _delivery
-      ? auth.addresses[auth.selectedAddress!].id
-      : null,
+      // Include the saved address ID only for delivery
+      address: _delivery ? auth.addresses[auth.selectedAddress!].line : null,
+      deliveryAddressId: _delivery
+          ? auth.addresses[auth.selectedAddress!].id
+          : null,
 
-  customerName: _name.text.trim(),
-  phone: _phone.text,
-  paymentLabel: '$method · $detail',
-  createdAt: DateTime.now(),
-);
+      customerName: _name.text.trim(),
+      phone: _phone.text,
+      paymentLabel: '$method · $detail',
+      createdAt: DateTime.now(),
+    );
 
     final failed = await Navigator.push<String>(
       context,
@@ -1244,7 +1299,7 @@ final draft = Order(
     // 4) open -> kitchen hours, info, slots
     final open = h.openMinutes;
     final close = h.closeMinutes;
-    final slots = _slotsFor(h);
+    final slots = _availableSlotsFor(h);
     final hasMinutes = slots.any((s) => s % 60 != 0);
 
     return Column(
@@ -1259,7 +1314,8 @@ final draft = Order(
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                   'Kitchen is open ${_fmtClock(open)} – ${_fmtClock(close)}',
+                    '${context.tr('kitchenIsOpen')} '
+                    '${_fmtClock(open)} – ${_fmtClock(close)}',
                     style: const TextStyle(
                       fontSize: 14.5,
                       fontWeight: FontWeight.w700,
@@ -1298,19 +1354,26 @@ final draft = Order(
         const SizedBox(height: 10),
         if (slots.isEmpty)
           Text(
-            _t('noSlots'),
+            _schedule?.closed == true ? _t('kitchenClosed') : _t('noSlots'),
             style: const TextStyle(color: AppColors.textMuted),
           )
         else
           ChipGrid(
-            columns: hasMinutes ? 2 : 3, // wider chips when labels have minutes
+            columns: hasMinutes ? 2 : 3,
             chips: [
-              for (final start in slots)
+              for (final start in _slotsFor(h))
                 SelectChip(
                   label: _slotLabel(start),
                   fontSize: 12.5,
                   selected: _slot == start,
-                  onTap: () => setState(() => _slot = start),
+                  enabled: _isSlotSelectable(start),
+                  tooltip: _isSlotSelectable(start)
+                      ? null
+                      : _t('slotUnavailable'),
+                  onTap: () {
+                    if (!_isSlotSelectable(start)) return;
+                    setState(() => _slot = start);
+                  },
                 ),
             ],
           ),
@@ -1686,4 +1749,3 @@ class _ExpiryFormatter extends TextInputFormatter {
     );
   }
 }
-
