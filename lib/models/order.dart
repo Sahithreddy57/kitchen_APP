@@ -1,222 +1,4 @@
 
-// import 'dish.dart';
-
-// class OrderLine {
-//   final Dish dish;
-//   final DishOption option;
-//   final int qty;
-
-//   const OrderLine({
-//     required this.dish,
-//     required this.option,
-//     required this.qty,
-//   });
-
-//   int get lineTotal => option.price * qty;
-
-//   Map<String, dynamic> toJson() => {
-//         'dish': dish.toJson(),
-//         'option': option.toJson(),
-//         'qty': qty,
-//       };
-
-//   factory OrderLine.fromJson(Map<String, dynamic> j) => OrderLine(
-//         dish: Dish.fromJson(
-//           Map<String, dynamic>.from(j['dish'] as Map),
-//         ),
-//         option: DishOption.fromJson(
-//           Map<String, dynamic>.from(j['option'] as Map),
-//         ),
-//         qty: (j['qty'] as num).toInt(),
-//       );
-// }
-
-// class Order {
-//   final String id;
-//   final String orderNumber;
-//   final List<OrderLine> lines;
-
-//   final int subtotal;
-//   final int packing;
-//   final int deliveryFee;
-//   final int total;
-
-//   final bool isDelivery;
-
-//   /// True for Order Now; false for Pre-order.
-//   final bool isOrderNow;
-
-//   final String whenText;
-//   final DateTime scheduledAt;
-
-//   final String? address;
-//   final String? deliveryAddressId;
-
-//   final String customerName;
-//   final String phone;
-//   final String paymentLabel;
-
-//   final DateTime createdAt;
-
-//   const Order({
-//     required this.id,
-//     this.orderNumber = '',
-//     required this.lines,
-//     required this.subtotal,
-//     required this.packing,
-//     required this.deliveryFee,
-//     required this.total,
-//     required this.isDelivery,
-//     this.isOrderNow = false,
-//     required this.whenText,
-//     required this.scheduledAt,
-//     this.address,
-//     this.deliveryAddressId,
-//     required this.customerName,
-//     required this.phone,
-//     required this.paymentLabel,
-//     required this.createdAt,
-//   });
-
-//   int get status {
-//     final now = DateTime.now();
-
-//     if (now.isAfter(scheduledAt.add(const Duration(hours: 1)))) {
-//       return 3;
-//     }
-
-//     if (now.isAfter(
-//       scheduledAt.subtract(const Duration(minutes: 10)),
-//     )) {
-//       return 2;
-//     }
-
-//     if (now.isAfter(
-//           scheduledAt.subtract(const Duration(minutes: 60)),
-//         ) &&
-//         now.isAfter(
-//           createdAt.add(const Duration(minutes: 2)),
-//         )) {
-//       return 1;
-//     }
-
-//     return 0;
-//   }
-
-//   /// Returns a copy with the backend order ID.
-//   Order withId(String newId) => Order(
-//         id: newId,
-//         orderNumber: orderNumber,
-//         lines: lines,
-//         subtotal: subtotal,
-//         packing: packing,
-//         deliveryFee: deliveryFee,
-//         total: total,
-//         isDelivery: isDelivery,
-//         isOrderNow: isOrderNow,
-//         whenText: whenText,
-//         scheduledAt: scheduledAt,
-//         address: address,
-//         deliveryAddressId: deliveryAddressId,
-//         customerName: customerName,
-//         phone: phone,
-//         paymentLabel: paymentLabel,
-//         createdAt: createdAt,
-//       );
-
-//   /// Returns a copy with the backend order number.
-//   Order withOrderNumber(String newOrderNumber) => Order(
-//         id: id,
-//         orderNumber: newOrderNumber,
-//         lines: lines,
-//         subtotal: subtotal,
-//         packing: packing,
-//         deliveryFee: deliveryFee,
-//         total: total,
-//         isDelivery: isDelivery,
-//         isOrderNow: isOrderNow,
-//         whenText: whenText,
-//         scheduledAt: scheduledAt,
-//         address: address,
-//         deliveryAddressId: deliveryAddressId,
-//         customerName: customerName,
-//         phone: phone,
-//         paymentLabel: paymentLabel,
-//         createdAt: createdAt,
-//       );
-
-//   /// Returns a copy with an updated phone number.
-//   Order withPhone(String newPhone) => Order(
-//         id: id,
-//         orderNumber: orderNumber,
-//         lines: lines,
-//         subtotal: subtotal,
-//         packing: packing,
-//         deliveryFee: deliveryFee,
-//         total: total,
-//         isDelivery: isDelivery,
-//         isOrderNow: isOrderNow,
-//         whenText: whenText,
-//         scheduledAt: scheduledAt,
-//         address: address,
-//         deliveryAddressId: deliveryAddressId,
-//         customerName: customerName,
-//         phone: newPhone,
-//         paymentLabel: paymentLabel,
-//         createdAt: createdAt,
-//       );
-
-//   Map<String, dynamic> toJson() => {
-//         'id': id,
-//         'orderNumber': orderNumber,
-//         'lines': lines.map((line) => line.toJson()).toList(),
-//         'subtotal': subtotal,
-//         'packing': packing,
-//         'deliveryFee': deliveryFee,
-//         'total': total,
-//         'isDelivery': isDelivery,
-//         'isOrderNow': isOrderNow,
-//         'whenText': whenText,
-//         'scheduledAt': scheduledAt.toIso8601String(),
-//         'address': address,
-//         'deliveryAddressId': deliveryAddressId,
-//         'customerName': customerName,
-//         'phone': phone,
-//         'paymentLabel': paymentLabel,
-//         'createdAt': createdAt.toIso8601String(),
-//       };
-
-//   factory Order.fromJson(Map<String, dynamic> j) => Order(
-//         id: j['id']?.toString() ?? '',
-//         orderNumber: j['orderNumber']?.toString() ?? '',
-//         lines: (j['lines'] as List)
-//             .map(
-//               (line) => OrderLine.fromJson(
-//                 Map<String, dynamic>.from(line as Map),
-//               ),
-//             )
-//             .toList(),
-//         subtotal: (j['subtotal'] as num).toInt(),
-//         packing: (j['packing'] as num).toInt(),
-//         deliveryFee: (j['deliveryFee'] as num).toInt(),
-//         total: (j['total'] as num).toInt(),
-//         isDelivery: j['isDelivery'] as bool,
-//         isOrderNow: j['isOrderNow'] as bool? ?? false,
-//         whenText: j['whenText'] as String,
-//         scheduledAt: DateTime.parse(
-//           j['scheduledAt'].toString(),
-//         ),
-//         address: j['address']?.toString(),
-//         deliveryAddressId: j['deliveryAddressId']?.toString(),
-//         customerName: j['customerName'] as String,
-//         phone: j['phone'] as String,
-//         paymentLabel: j['paymentLabel'] as String,
-//         createdAt: DateTime.parse(
-//           j['createdAt'].toString(),
-//         ),
-//       );
-// }
-
 import 'dish.dart';
 
 class OrderLine {
@@ -277,7 +59,7 @@ class Order {
   final DateTime createdAt;
 
   /// Exact status received from the customer order API.
-  /// Examples: CONFIRMED, PROCESSING, READY_FOR_PICKUP, COMPLETED.
+  /// Examples: CONFIRMED, PROCESSING, READY_FOR_PICKUP, OUT_FOR_DELIVERY.
   final String? backendStatus;
 
   const Order({
@@ -301,7 +83,30 @@ class Order {
     this.backendStatus,
   });
 
-  String get normalizedStatus => (backendStatus ?? '').trim().toUpperCase();
+  /// Normalizes common backend status formats such as "Ready for Pickup",
+  /// "READY-FOR-PICKUP", and "READY_FOR_PICKUP" to READY_FOR_PICKUP.
+  String get normalizedStatus => (backendStatus ?? '')
+      .trim()
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^A-Z0-9]+'), '_')
+      .replaceAll(RegExp(r'^_+|_+$'), '');
+
+  bool get isCancellationLocked {
+    final compactStatus = normalizedStatus.replaceAll('_', '');
+
+    return const {
+      'PREPARING',
+      'PROCESSING',
+      'INPREPARATION',
+      'READY',
+      'READYFORPICKUP',
+      'OUTFORDELIVERY',
+      'ONWAY',
+      'ONTHEWAY',
+      'DELIVERING',
+      'COMPLETED',
+    }.contains(compactStatus);
+  }
 
   String get statusLabel {
     switch (normalizedStatus) {
@@ -311,11 +116,16 @@ class Order {
         return 'Payment Pending';
       case 'CONFIRMED':
         return 'Confirmed';
+      case 'PREPARING':
       case 'PROCESSING':
+      case 'IN_PREPARATION':
         return 'Preparing';
+      case 'READY':
       case 'READY_FOR_PICKUP':
         return 'Ready for Pickup';
       case 'OUT_FOR_DELIVERY':
+      case 'ON_THE_WAY':
+      case 'DELIVERING':
         return 'Out for Delivery';
       case 'COMPLETED':
         return 'Completed';
@@ -349,10 +159,15 @@ class Order {
       case 'PAYMENT_PENDING':
       case 'CONFIRMED':
         return 0;
+      case 'PREPARING':
       case 'PROCESSING':
+      case 'IN_PREPARATION':
         return 1;
+      case 'READY':
       case 'READY_FOR_PICKUP':
       case 'OUT_FOR_DELIVERY':
+      case 'ON_THE_WAY':
+      case 'DELIVERING':
         return 2;
       case 'COMPLETED':
         return 3;
@@ -370,9 +185,7 @@ class Order {
     if (now.isAfter(scheduledAt.subtract(const Duration(minutes: 10)))) {
       return 2;
     }
-    if (now.isAfter(
-          scheduledAt.subtract(const Duration(minutes: 60)),
-        ) &&
+    if (now.isAfter(scheduledAt.subtract(const Duration(minutes: 60))) &&
         now.isAfter(createdAt.add(const Duration(minutes: 2)))) {
       return 1;
     }
@@ -387,38 +200,38 @@ class Order {
   Order withPhone(String newPhone) => _copyWith(phone: newPhone);
 
   Order withBackendStatus(String? newStatus) =>
-      _copyWith(backendStatus: newStatus);
-Order _copyWith({
-  String? id,
-  String? orderNumber,
-  String? phone,
-  String? backendStatus,
-  bool clearBackendStatus = false,
-}) {
-  return Order(
-    id: id ?? this.id,
-    orderNumber: orderNumber ?? this.orderNumber,
-    lines: lines,
-    subtotal: subtotal,
-    packing: packing,
-    deliveryFee: deliveryFee,
-    total: total,
-    isDelivery: isDelivery,
-    isOrderNow: isOrderNow,
-    whenText: whenText,
-    scheduledAt: scheduledAt,
-    address: address,
-    deliveryAddressId: deliveryAddressId,
-    customerName: customerName,
-    phone: phone ?? this.phone,
-    paymentLabel: paymentLabel,
-    createdAt: createdAt,
-    backendStatus: clearBackendStatus
-        ? null
-        : backendStatus ?? this.backendStatus,
-  );
-}
- 
+      _copyWith(backendStatus: newStatus, clearBackendStatus: newStatus == null);
+
+  Order _copyWith({
+    String? id,
+    String? orderNumber,
+    String? phone,
+    String? backendStatus,
+    bool clearBackendStatus = false,
+  }) {
+    return Order(
+      id: id ?? this.id,
+      orderNumber: orderNumber ?? this.orderNumber,
+      lines: lines,
+      subtotal: subtotal,
+      packing: packing,
+      deliveryFee: deliveryFee,
+      total: total,
+      isDelivery: isDelivery,
+      isOrderNow: isOrderNow,
+      whenText: whenText,
+      scheduledAt: scheduledAt,
+      address: address,
+      deliveryAddressId: deliveryAddressId,
+      customerName: customerName,
+      phone: phone ?? this.phone,
+      paymentLabel: paymentLabel,
+      createdAt: createdAt,
+      backendStatus:
+          clearBackendStatus ? null : backendStatus ?? this.backendStatus,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'orderNumber': orderNumber,
@@ -441,14 +254,18 @@ Order _copyWith({
       };
 
   factory Order.fromJson(Map<String, dynamic> json) {
+    final customer = json['customer'];
+    final payment = json['payment'];
+
     return Order(
       id: (json['id'] ?? json['_id'])?.toString() ?? '',
       orderNumber:
           (json['orderNumber'] ?? json['order_number'])?.toString() ?? '',
       lines: (json['lines'] as List? ?? [])
+          .whereType<Map>()
           .map(
             (line) => OrderLine.fromJson(
-              Map<String, dynamic>.from(line as Map),
+              Map<String, dynamic>.from(line),
             ),
           )
           .toList(),
@@ -475,17 +292,11 @@ Order _copyWith({
       deliveryAddressId: json['deliveryAddressId']?.toString() ??
           json['delivery_address_id']?.toString(),
       customerName: json['customerName']?.toString() ??
-          (json['customer'] is Map
-              ? (json['customer']['name']?.toString() ?? '')
-              : ''),
+          (customer is Map ? customer['name']?.toString() ?? '' : ''),
       phone: json['phone']?.toString() ??
-          (json['customer'] is Map
-              ? (json['customer']['phone']?.toString() ?? '')
-              : ''),
+          (customer is Map ? customer['phone']?.toString() ?? '' : ''),
       paymentLabel: json['paymentLabel']?.toString() ??
-          (json['payment'] is Map
-              ? (json['payment']['method']?.toString() ?? '')
-              : ''),
+          (payment is Map ? payment['method']?.toString() ?? '' : ''),
       createdAt: DateTime.tryParse(
             (json['createdAt'] ?? json['created_at'])?.toString() ?? '',
           ) ??
@@ -495,3 +306,4 @@ Order _copyWith({
     );
   }
 }
+

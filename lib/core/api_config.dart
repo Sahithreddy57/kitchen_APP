@@ -39,8 +39,8 @@ const String kPreorderScheduleDayPath =
 const bool kUseMockHours = false;
 
 /// Hundi packages API
-const String kHundiBase = '/api/admin/hundi';
-const String kHundiPath = '$kHundiBase/active';
+// const String kHundiBase = '/api/admin/hundi';
+// const String kHundiPath = '$kHundiBase/active';
 
 /// Categories API
 const String kCategoriesPath = '/api/admin/categories';
