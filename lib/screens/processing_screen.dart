@@ -278,6 +278,10 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
 
       // STEP 4: Submit the order to the backend.
       // CreatedOrder contains both the database ID and order number.
+      debugPrint('DEBUG Delivery selected: ${widget.draft.isDelivery}');
+debugPrint(
+  'DEBUG Delivery address ID: ${widget.draft.deliveryAddressId}',
+);
       final createdOrder = await svc.sendToKitchen(
         widget.draft,
         customerId: customerId,
