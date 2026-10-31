@@ -58,8 +58,6 @@ class Order {
 
   final DateTime createdAt;
 
-  /// Exact status received from the customer order API.
-  /// Examples: CONFIRMED, PROCESSING, READY_FOR_PICKUP, OUT_FOR_DELIVERY.
   final String? backendStatus;
 
   const Order({
@@ -83,8 +81,6 @@ class Order {
     this.backendStatus,
   });
 
-  /// Normalizes common backend status formats such as "Ready for Pickup",
-  /// "READY-FOR-PICKUP", and "READY_FOR_PICKUP" to READY_FOR_PICKUP.
   String get normalizedStatus => (backendStatus ?? '')
       .trim()
       .toUpperCase()
@@ -147,12 +143,6 @@ class Order {
         'PAYMENT_EXPIRED',
       }.contains(normalizedStatus);
 
-  /// Timeline index:
-  /// 0 = initial / confirmed, 1 = preparing,
-  /// 2 = ready or out for delivery, 3 = completed.
-  ///
-  /// Uses backend status when available. The time estimate is only a
-  /// fallback for older locally saved orders that have no backend status.
   int get status {
     switch (normalizedStatus) {
       case 'NEW':
@@ -182,13 +172,16 @@ class Order {
     if (now.isAfter(scheduledAt.add(const Duration(hours: 1)))) {
       return 3;
     }
+
     if (now.isAfter(scheduledAt.subtract(const Duration(minutes: 10)))) {
       return 2;
     }
+
     if (now.isAfter(scheduledAt.subtract(const Duration(minutes: 60))) &&
         now.isAfter(createdAt.add(const Duration(minutes: 2)))) {
       return 1;
     }
+
     return 0;
   }
 
@@ -200,7 +193,10 @@ class Order {
   Order withPhone(String newPhone) => _copyWith(phone: newPhone);
 
   Order withBackendStatus(String? newStatus) =>
-      _copyWith(backendStatus: newStatus, clearBackendStatus: newStatus == null);
+      _copyWith(
+        backendStatus: newStatus,
+        clearBackendStatus: newStatus == null,
+      );
 
   Order _copyWith({
     String? id,
@@ -283,7 +279,9 @@ class Order {
           (json['fulfillment_type']?.toString().toUpperCase() == 'DELIVERY'),
       isOrderNow: json['isOrderNow'] as bool? ??
           (json['order_type']?.toString().toUpperCase() == 'IMMEDIATE'),
-      whenText: json['whenText']?.toString() ?? json['when']?.toString() ?? '',
+      whenText: json['whenText']?.toString() ??
+          json['when']?.toString() ??
+          '',
       scheduledAt: DateTime.tryParse(
             (json['scheduledAt'] ?? json['requested_at'])?.toString() ?? '',
           ) ??
@@ -301,9 +299,119 @@ class Order {
             (json['createdAt'] ?? json['created_at'])?.toString() ?? '',
           ) ??
           DateTime.now(),
-      backendStatus: json['status']?.toString() ??
-          json['backendStatus']?.toString(),
+      backendStatus:
+          json['status']?.toString() ?? json['backendStatus']?.toString(),
+    );
+  }
+
+  /// Converts an order from GET /api/customer/orders/by-mobile.
+  factory Order.fromBackendJson(
+    Map<String, dynamic> json, {
+    required String customerName,
+    required String phone,
+  }) {
+    int readInt(dynamic value, [int fallback = 0]) {
+      if (value is num) return value.toInt();
+      return int.tryParse(value?.toString() ?? '') ?? fallback;
+    }
+
+    final items = json['items'] is List
+        ? json['items'] as List
+        : <dynamic>[];
+
+    final lines = items.map((item) {
+      final itemJson = Map<String, dynamic>.from(item as Map);
+
+      final quantity =
+          readInt(itemJson['quantity'], 1).clamp(1, 100).toInt();
+
+      final itemType =
+          (itemJson['item_type'] ?? 'PRODUCT').toString();
+
+      final productName =
+          (itemJson['product_name'] ?? 'Item').toString();
+
+      final variantName =
+          (itemJson['variant_name'] ?? '').toString();
+final option = DishOption(
+  variantName.isEmpty ? 'Regular' : variantName,
+  readInt(itemJson['unit_price']),
+  id: (itemJson['variant_id'] ?? '').toString(),
+);
+
+      final dish = Dish(
+        id: (itemJson['product_id'] ?? itemJson['item_id'] ?? '').toString(),
+        name: productName,
+        nameTe: '',
+        description: '',
+        descriptionTe: '',
+        category: '',
+        categoryName: '',
+        options: [option],
+        imageUrl: '',
+        itemType: itemType,
+      );
+
+      return OrderLine(
+        dish: dish,
+        option: option,
+        qty: quantity,
+      );
+    }).toList();
+
+    final addressJson = json['delivery_address'];
+    String? address;
+
+    if (addressJson is Map) {
+      final parts = [
+        addressJson['label'],
+        addressJson['house_flat_no'],
+        addressJson['street_area'],
+        addressJson['landmark'],
+        addressJson['pincode'],
+      ]
+          .where((value) =>
+              value != null && value.toString().trim().isNotEmpty)
+          .map((value) => value.toString().trim())
+          .toList();
+
+      if (parts.isNotEmpty) {
+        address = parts.join(', ');
+      }
+    }
+
+    final createdAt =
+        DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+            DateTime.now();
+
+    final requestedAt =
+        DateTime.tryParse(json['requested_at']?.toString() ?? '');
+
+    final orderType =
+        (json['order_type'] ?? 'IMMEDIATE').toString().toUpperCase();
+
+    final fulfillmentType =
+        (json['fulfillment_type'] ?? 'PICKUP').toString().toUpperCase();
+
+    return Order(
+      id: (json['order_id'] ?? json['_id'] ?? json['id'] ?? '').toString(),
+      orderNumber: (json['order_number'] ?? '').toString(),
+      lines: lines,
+      subtotal: readInt(json['subtotal']),
+      packing: readInt(json['packing_charge']),
+      deliveryFee: readInt(json['delivery_charge']),
+      total: readInt(json['total_amount']),
+      isDelivery: fulfillmentType == 'DELIVERY',
+      isOrderNow: orderType == 'IMMEDIATE',
+      whenText: requestedAt == null ? 'Immediate' : 'Scheduled',
+      scheduledAt: requestedAt ?? createdAt,
+      address: address,
+      deliveryAddressId: '',
+      customerName: customerName,
+      phone: phone,
+      paymentLabel: (json['payment_status'] ?? 'PENDING').toString(),
+      createdAt: createdAt,
+      backendStatus: (json['status'] ?? 'NEW').toString(),
     );
   }
 }
-

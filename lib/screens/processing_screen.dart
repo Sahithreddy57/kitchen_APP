@@ -204,14 +204,12 @@ class ProcessingScreen extends StatefulWidget {
 }
 
 class _ProcessingScreenState extends State<ProcessingScreen> {
-  // Steps before _step are complete.
   int _step = 0;
 
   @override
   void initState() {
     super.initState();
 
-    // Wait until the first frame before accessing navigation/state.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _run();
     });
@@ -221,67 +219,23 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     final svc = PaymentService();
 
     try {
-      // STEP 1: Mock payment initiation.
-      // This is NOT a real payment gateway.
-      final pay = await svc.startPayment(widget.request);
-
-      if (!pay.success) {
-        throw Exception(
-          pay.error ?? 'Payment initiation failed.',
-        );
-      }
-
-      final txnId = pay.txnId;
-
-      if (txnId == null || txnId.isEmpty) {
-        throw Exception('Payment transaction ID is missing.');
-      }
-
-      if (!mounted) return;
-      setState(() => _step = 1);
-
-      // STEP 2: Mock payment confirmation.
-      // This does NOT verify an actual payment.
-      final paymentConfirmed = await svc.confirmPayment(txnId);
-
-      if (!paymentConfirmed) {
-        throw Exception('Payment confirmation failed.');
-      }
-
-      if (!mounted) return;
-      setState(() => _step = 2);
-
-      // STEP 3: Get the logged-in customer's credentials.
+      // STEP 1: Get authenticated customer details.
       final auth = context.read<AuthProvider>();
 
       final customerId = auth.customerId.trim();
       final token = auth.token.trim();
 
-      debugPrint(
-        'DEBUG Customer ID available: ${customerId.isNotEmpty}',
-      );
-      debugPrint(
-        'DEBUG Customer token available: ${token.isNotEmpty}',
-      );
-
-      if (customerId.isEmpty) {
+      if (customerId.isEmpty || token.isEmpty) {
         throw Exception(
-          'Customer ID is missing. Please sign in again.',
+          'Your login session has expired. Please sign in again.',
         );
       }
 
-      if (token.isEmpty) {
-        throw Exception(
-          'Customer authentication token is missing. Please sign in again.',
-        );
-      }
+      if (!mounted) return;
+      setState(() => _step = 0);
 
-      // STEP 4: Submit the order to the backend.
-      // CreatedOrder contains both the database ID and order number.
-      debugPrint('DEBUG Delivery selected: ${widget.draft.isDelivery}');
-debugPrint(
-  'DEBUG Delivery address ID: ${widget.draft.deliveryAddressId}',
-);
+      // STEP 2: Submit the order to the backend.
+      // Backend validates kitchen, slots, Hundi, address and items.
       final createdOrder = await svc.sendToKitchen(
         widget.draft,
         customerId: customerId,
@@ -291,35 +245,88 @@ debugPrint(
       );
 
       if (createdOrder.id.trim().isEmpty) {
+        throw Exception('The backend did not return an order ID.');
+      }
+
+      // Your backend currently returns NEW after successful creation.
+      const allowedStatuses = {
+        'NEW',
+        'PAYMENT_PENDING',
+      };
+
+      if (!allowedStatuses.contains(
+        createdOrder.status.toUpperCase(),
+      )) {
         throw Exception(
-          'The backend did not return an order ID.',
+          'Unexpected order status: ${createdOrder.status}',
         );
       }
 
-      debugPrint('ORDER DATABASE ID: ${createdOrder.id}');
-      debugPrint('CUSTOMER ORDER NUMBER: ${createdOrder.orderNumber}');
+      if (createdOrder.payableAmount <= 0) {
+        throw Exception(
+          'The backend returned an invalid payment amount.',
+        );
+      }
+
+      debugPrint('ORDER CREATED: ${createdOrder.id}');
+      debugPrint('ORDER NUMBER: ${createdOrder.orderNumber}');
+      debugPrint('ORDER STATUS: ${createdOrder.status}');
+      debugPrint('ORDER AMOUNT: ${createdOrder.payableAmount}');
 
       if (!mounted) return;
-      setState(() => _step = 3);
+      setState(() => _step = 1);
 
-      await Future.delayed(
-        const Duration(milliseconds: 600),
+      // STEP 3: Start mock payment using the backend amount.
+      final paymentRequest = PaymentRequest(
+        amount: createdOrder.payableAmount,
+        method: widget.request.method,
+        detail: widget.request.detail,
       );
 
+      final payment = await svc.startPayment(paymentRequest);
+
+      if (!payment.success) {
+        throw Exception(
+          payment.error ?? 'Payment failed. Please try again.',
+        );
+      }
+
+      final txnId = payment.txnId;
+
+      if (txnId == null || txnId.trim().isEmpty) {
+        throw Exception('Payment transaction ID is missing.');
+      }
+
+      if (!mounted) return;
+      setState(() => _step = 2);
+
+      // STEP 4: Mock payment confirmation.
+      final paymentConfirmed = await svc.confirmPayment(txnId);
+
+      if (!paymentConfirmed) {
+        throw Exception('Payment confirmation failed.');
+      }
+
+      debugPrint('MOCK PAYMENT SUCCESSFUL: $txnId');
+
       if (!mounted) return;
 
-      // STEP 5: Store both IDs in the local order.
+      // STEP 5: Save the successfully processed order locally.
       final order = widget.draft
           .withId(createdOrder.id)
           .withOrderNumber(createdOrder.orderNumber);
 
-      // Add the order locally only after backend success.
       context.read<OrdersProvider>().add(order);
 
-      // Clear the cart only after backend success.
+      // STEP 6: Clear cart after mock payment success.
       context.read<CartProvider>().clear();
 
-      // STEP 6: Navigate to order confirmation.
+      debugPrint('ORDER SAVED LOCALLY');
+      debugPrint('CART CLEARED');
+
+      if (!mounted) return;
+
+      // STEP 7: Navigate to order confirmation.
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
@@ -335,8 +342,10 @@ debugPrint(
 
       if (!mounted) return;
 
-      // Return the actual error to the checkout screen.
-      Navigator.pop(context, error.toString());
+      Navigator.pop(
+        context,
+        error.toString().replaceFirst('Exception: ', ''),
+      );
     }
   }
 

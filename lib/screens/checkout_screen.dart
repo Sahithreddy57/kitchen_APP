@@ -22,6 +22,7 @@ import 'add_address_screen.dart';
 import 'processing_screen.dart';
 import 'name_screen.dart';
 import '../services/preorder_schedule_service.dart';
+import '../services/kitchen_status_service.dart';
 
 const kPackingFee = 30;
 const kDeliveryFee = 40;
@@ -35,13 +36,26 @@ class CheckoutScreen extends StatefulWidget {
   State<CheckoutScreen> createState() => _CheckoutScreenState();
 }
 
-class _CheckoutScreenState extends State<CheckoutScreen> {
+class _CheckoutScreenState extends State<CheckoutScreen>
+    with WidgetsBindingObserver {
   final _authService = AuthService();
 
   // 1. details
   final _name = TextEditingController();
   final _phone = TextEditingController();
   final _otp = TextEditingController();
+// Live kitchen status from the backend
+final _kitchenStatusService = KitchenStatusService();
+
+KitchenStatus? _kitchenStatus;
+bool _kitchenStatusLoading = true;
+Timer? _kitchenStatusTimer;
+
+bool get _canOrderNow =>
+    !_kitchenStatusLoading &&
+    _kitchenStatus?.orderNowEnabled == true;
+
+
   _Otp _otpState = _Otp.idle;
   String? _otpError;
   String _verifiedPhone = '';
@@ -88,13 +102,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final a = context.read<AuthProvider>();
     _name.text = a.name;
     _phone.text = a.phone;
     if (a.isVerified) _verifiedPhone = a.phone;
     _date = DateUtils.dateOnly(DateTime.now());
+    _startKitchenStatusPolling();
     final cart = context.read<CartProvider>();
-    if (cart.hasPreOrderOnlyItems) {
+    if (cart.hasPreOrderOnlyItems || cart.hasHundiItem) {
       // Hundi and preorder-only options must use Pre-order.
       _orderNow = false;
 
@@ -106,25 +122,29 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       });
     }
   }
+@override
+void dispose() {
+  WidgetsBinding.instance.removeObserver(this);
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _dateScroll.dispose();
-    for (final c in [
-      _name,
-      _phone,
-      _otp,
-      _upiId,
-      _cardNo,
-      _cardName,
-      _expiry,
-      _cvv,
-    ]) {
-      c.dispose();
-    }
-    super.dispose();
+  _timer?.cancel();
+  _dateScroll.dispose();
+  _kitchenStatusTimer?.cancel();
+
+  for (final c in [
+    _name,
+    _phone,
+    _otp,
+    _upiId,
+    _cardNo,
+    _cardName,
+    _expiry,
+    _cvv,
+  ]) {
+    c.dispose();
   }
+
+  super.dispose();
+}
 
   // Safe to call from build AND from button handlers.
   String _t(String k) =>
@@ -133,11 +153,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   // ---------------- validation helpers ----------------
   bool get _phoneValid => RegExp(r'^[6-9]\d{9}$').hasMatch(_phone.text);
 
-  /// Any preorder-only size forces preorder. Hundi alone requires tomorrow.
-  bool get _preOnly => context.read<CartProvider>().hasPreOrderOnlyItems;
+  /// Preorder-only options and Hundi always require preorder.
+  bool get _preOnly =>
+      context.read<CartProvider>().hasPreOrderOnlyItems ||
+      context.read<CartProvider>().hasHundiItem;
   bool get _hundiInCart => context.read<CartProvider>().hasHundiItem;
   bool get _preOrderOnlyInCart =>
-      context.read<CartProvider>().hasPreOrderOnlyItems;
+      context.read<CartProvider>().hasPreOrderOnlyItems ||
+      context.read<CartProvider>().hasHundiItem;
   int get _chipCount => _preOnly ? 7 : 6; // visible date chips
   bool get _verified =>
       _verifiedPhone.isNotEmpty && _verifiedPhone == _phone.text;
@@ -174,8 +197,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     if (_delivery && context.read<AuthProvider>().selectedAddress == null) {
       return 'reqAddress';
-    }
+      }
 
+    if (_orderNow) {
+      if (_kitchenStatusLoading) {
+        return 'kitchenClosed';
+      }
+
+      if (!_canOrderNow) {
+        return 'kitchenClosed';
+      }
+    }
     if (!_orderNow) {
       if (_hoursLoading ||
           _scheduleLoading ||
@@ -216,6 +248,45 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(_t(key))));
   }
+ Future<void> _loadKitchenStatus() async {
+  try {
+    final status = await _kitchenStatusService.fetch();
+
+    if (!mounted) return;
+
+    setState(() {
+      _kitchenStatus = status;
+      _kitchenStatusLoading = false;
+    });
+  } catch (e) {
+    debugPrint('Checkout kitchen status error: $e');
+
+    if (!mounted) return;
+
+    setState(() {
+      // Keep the last successfully fetched status.
+      _kitchenStatusLoading = false;
+    });
+  }
+}
+
+void _startKitchenStatusPolling() {
+  _kitchenStatusTimer?.cancel();
+
+  _loadKitchenStatus();
+
+  _kitchenStatusTimer = Timer.periodic(
+    const Duration(seconds: 45),
+    (_) => _loadKitchenStatus(),
+  );
+}
+
+@override
+void didChangeAppLifecycleState(AppLifecycleState state) {
+  if (state == AppLifecycleState.resumed) {
+    _loadKitchenStatus();
+  }
+}
 
   Future<void> _sendOtp() async {
     FocusScope.of(context).unfocus();
@@ -643,19 +714,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  Future<void> _pay() async {
-    FocusScope.of(context).unfocus();
-    final err = _firstError();
-    if (err != null) {
-      setState(() => _showErrors = true);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(_t(err))));
-      return;
-    }
 
+Future<void> _pay() async {
+  if (_paying) return;
+
+  FocusScope.of(context).unfocus();
+
+  final err = _firstError();
+  if (err != null) {
+    setState(() => _showErrors = true);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(_t(err))));
+    return;
+  }
+
+  setState(() {
+    _paying = true;
+    _showErrors = false;
+  });
+
+  try {
     final cart = context.read<CartProvider>();
     final auth = context.read<AuthProvider>();
+
     final fee = _delivery ? kDeliveryFee : 0;
     final total = cart.totalPrice + kPackingFee + fee;
 
@@ -665,50 +747,58 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'paytm': 'Paytm',
       'other': 'UPI',
     };
-    final String method, detail;
+
+    final String method;
+    final String detail;
+
     if (_payTab == 0) {
       method = 'upi';
       detail = upiNames[_upiApp] ?? 'UPI';
     } else if (_payTab == 1) {
       method = 'card';
-      detail = _cardNo.text.substring(12); // last 4 digits only
+      detail = 'Card';
     } else {
       method = 'netbanking';
       detail = _bank ?? '';
     }
+    debugPrint('DELIVERY SELECTED: $_delivery');
+debugPrint('SELECTED ADDRESS INDEX: ${auth.selectedAddress}');
+debugPrint('TOTAL SAVED ADDRESSES: ${auth.addresses.length}');
+
+if (auth.selectedAddress != null &&
+    auth.selectedAddress! >= 0 &&
+    auth.selectedAddress! < auth.addresses.length) {
+  final selected = auth.addresses[auth.selectedAddress!];
+
+  debugPrint('SELECTED ADDRESS LINE: ${selected.line}');
+  debugPrint('SELECTED ADDRESS ID: "${selected.id}"');
+}
 
     final draft = Order(
-      id: '', // Filled in once the kitchen confirms
-      orderNumber: '', // Assigned when the order number is available
-
+      id: '',
+      orderNumber: '',
       lines: [
         for (final it in cart.items)
           OrderLine(dish: it.dish, option: it.option, qty: it.qty),
       ],
-
       subtotal: cart.totalPrice,
       packing: kPackingFee,
       deliveryFee: fee,
       total: total,
-
-      // Pickup or delivery
       isDelivery: _delivery,
-
-      // Order Now or Pre-order
       isOrderNow: _orderNow,
-
       whenText: _whenText(),
       scheduledAt: _scheduledAt(),
-
-      // Include the saved address ID only for delivery
-      address: _delivery ? auth.addresses[auth.selectedAddress!].line : null,
+      address: _delivery
+          ? auth.addresses[auth.selectedAddress!].line
+          : null,
       deliveryAddressId: _delivery
           ? auth.addresses[auth.selectedAddress!].id
           : null,
-
       customerName: _name.text.trim(),
-      phone: _phone.text,
+      phone: _phone.text.trim(),
       paymentLabel: '$method · $detail',
+      
       createdAt: DateTime.now(),
     );
 
@@ -726,13 +816,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       ),
     );
 
-    // Only reached if the payment failed (success replaces all screens).
-    if (failed != null && mounted) {
+    if (!mounted) return;
+
+    if (failed != null && failed.trim().isNotEmpty) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(_t('payFailed'))));
+        ..showSnackBar(
+          SnackBar(
+            content: Text(failed),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+    }
+  } catch (e, stack) {
+    debugPrint('Checkout processing error: $e');
+    debugPrintStack(stackTrace: stack);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text('Unable to continue: $e')),
+      );
+  } finally {
+    if (mounted) {
+      setState(() => _paying = false);
     }
   }
+}
 
   // ---------------- UI ----------------
   @override
@@ -1108,13 +1220,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (_preOnly) PreOrderNote(text: _t('preOrderNote')),
-        OptionCard(
-          selected: _orderNow,
-          enabled: !_preOnly,
-          title: _t('orderNow'),
-          subtitle: _preOnly ? _t('preOrderOnlyNoOrderNow') : _t('orderNowSub'),
-          onTap: () => setState(() => _orderNow = true),
-        ),
+OptionCard(
+  selected: _orderNow,
+  enabled: !_preOnly && !_kitchenStatusLoading && _canOrderNow,
+  title: _t('orderNow'),
+  subtitle: _preOnly
+      ? _t('preOrderOnlyNoOrderNow')
+      : _kitchenStatusLoading
+          ? (context.read<LanguageProvider>().isTelugu
+              ? 'వంటగది స్థితిని తనిఖీ చేస్తోంది...'
+              : 'Checking kitchen availability...')
+          : !_canOrderNow
+              ? (_kitchenStatus?.displayMessage ??
+                  (context.read<LanguageProvider>().isTelugu
+                      ? 'వంటగది ప్రస్తుతం అందుబాటులో లేదు. ముందస్తు ఆర్డర్ చేయండి.'
+                      : 'Kitchen is currently unavailable. Please choose preorder.'))
+              : _t('orderNowSub'),
+  onTap: () {
+    if (_preOnly || _kitchenStatusLoading || !_canOrderNow) {
+      return;
+    }
+
+    setState(() => _orderNow = true);
+  },
+),
         OptionCard(
           selected: !_orderNow,
           title: _t('preorder'),

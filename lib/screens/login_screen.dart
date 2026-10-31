@@ -1,9 +1,12 @@
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/app_core.dart';
 import '../providers/auth_provider.dart';
 import '../providers/language_provider.dart';
+import '../providers/orders_provider.dart';
+import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../widgets/checkout_widgets.dart';
 import '../widgets/phone_verifier.dart';
@@ -39,8 +42,11 @@ class _LoginScreenState extends State<LoginScreen> {
       final profile = await Navigator.push<ProfileDetails>(
         context,
         MaterialPageRoute(
-          builder: (_) =>
-              NameScreen(phone: phone, initialName: '', onSubmitProfile: null),
+          builder: (_) => NameScreen(
+            phone: phone,
+            initialName: '',
+            onSubmitProfile: null,
+          ),
         ),
       );
 
@@ -69,12 +75,15 @@ class _LoginScreenState extends State<LoginScreen> {
     return result;
   }
 
-  void _verified(String phone) {
+  Future<void> _verified(String phone) async {
     final result = _result;
 
     if (result == null) return;
 
-    context.read<AuthProvider>().register(
+    // 1. Save the authenticated customer's details.
+    final auth = context.read<AuthProvider>();
+
+    auth.register(
       result.name ?? '',
       phone,
       gender: result.gender ?? '',
@@ -83,6 +92,21 @@ class _LoginScreenState extends State<LoginScreen> {
       customerId: result.customerId,
     );
 
+    // 2. Set the token for authenticated API requests.
+    if (result.token != null && result.token!.isNotEmpty) {
+      ApiClient.setCustomerToken(result.token!);
+    }
+
+    // 3. Fetch order history for this logged-in mobile number.
+    if (result.token != null && result.token!.isNotEmpty) {
+      await context.read<OrdersProvider>().fetchCustomerOrders(
+            phone: phone,
+          );
+    }
+
+    if (!mounted) return;
+
+    // 4. Navigate to the Home Screen after fetching orders.
     Navigator.popUntil(context, (route) => route.isFirst);
   }
 

@@ -1,9 +1,6 @@
-
-
-
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import '../widgets/tap_cursor.dart';
 import '../core/app_core.dart';
 import '../models/category.dart';
@@ -16,6 +13,8 @@ import '../widgets/dish_card.dart';
 import '../widgets/weekend_hundi_banner.dart';
 import 'product_detail_screen.dart';
 import 'track_order_screen.dart';
+import '../services/kitchen_status_service.dart';
+
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onSeeMenu;
@@ -29,7 +28,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const _categories = [
     'curries',
     'fry',
@@ -39,6 +38,10 @@ class _HomeScreenState extends State<HomeScreen> {
   ];
 
   final _api = MenuApiService();
+  final _kitchenStatusService = KitchenStatusService();
+  KitchenStatus? _kitchenStatus;
+bool _kitchenStatusLoading = true;
+Timer? _kitchenStatusTimer;
 
   late Future<List<List<Dish>>> _future;
 
@@ -46,11 +49,21 @@ class _HomeScreenState extends State<HomeScreen> {
   List<MenuCategory> _cats = MenuCategory.standard;
   String _query = '';
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
+ @override
+void initState() {
+  super.initState();
+  WidgetsBinding.instance.addObserver(this);
+  _load();
+  _startKitchenStatusPolling();
+}
+
+@override
+void dispose() {
+  WidgetsBinding.instance.removeObserver(this);
+  _kitchenStatusTimer?.cancel();
+  super.dispose();
+
+}
 
   void _load() {
     _future = Future.wait([
@@ -66,6 +79,44 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }).catchError((_) {});
   }
+Future<void> _loadKitchenStatus() async {
+  try {
+    final status = await _kitchenStatusService.fetch();
+
+    if (!mounted) return;
+
+    setState(() {
+      _kitchenStatus = status;
+      _kitchenStatusLoading = false;
+    });
+  } catch (e) {
+    debugPrint('Kitchen status error: $e');
+
+    if (!mounted) return;
+
+    // Keep the last successful status if a refresh fails.
+    setState(() {
+      _kitchenStatusLoading = false;
+    });
+  }
+}
+
+void _startKitchenStatusPolling() {
+  _kitchenStatusTimer?.cancel();
+
+  _loadKitchenStatus();
+
+  _kitchenStatusTimer = Timer.periodic(
+    const Duration(seconds: 45),
+    (_) => _loadKitchenStatus(),
+  );
+}
+@override
+void didChangeAppLifecycleState(AppLifecycleState state) {
+  if (state == AppLifecycleState.resumed) {
+    _loadKitchenStatus();
+  }
+}
 
   List<Dish> _filter(List<Dish> all, bool isTe) {
     return all.where((dish) {
@@ -97,15 +148,14 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             children: [
-              // Category chips
-              _buildCategories(),
+              _buildCategories(isTe),
 
-              const SizedBox(height: 20),
+const SizedBox(height: 8),
 
-              // Recent order with Track Order button
-              _buildRecentOrder(),
+_buildRecentOrder(),
 
-              const SizedBox(height: 24),
+const SizedBox(height: 8),
+
 
               // Popular dishes heading
               Row(
@@ -147,17 +197,107 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     );
   }
-
-  Widget _buildCategories() {
-    return CategoryChips(
-      categories: _cats,
-      showAll: false,
-      selected: _selectedCategory,
-      onSelected: (category) {
-        setState(() => _selectedCategory = category);
-      },
-    );
+  Widget _buildKitchenStatus(bool isTe) {
+  if (_kitchenStatusLoading || _kitchenStatus == null) {
+    return const SizedBox.shrink();
   }
+
+  final status = _kitchenStatus!;
+
+  final isAvailable = status.orderNowEnabled;
+  final isPaused = status.status == 'PAUSED';
+
+  final message = isAvailable
+      ? (isTe
+          ? 'వంటగది తెరిచి ఉంది. ఇప్పుడే ఆర్డర్ చేయండి!'
+          : status.message)
+      : isPaused
+          ? (isTe
+              ? status.resumesInMinutes != null
+                  ? 'వంటగది తాత్కాలికంగా నిలిపివేయబడింది. సుమారు ${status.resumesInMinutes} నిమిషాల్లో తిరిగి ప్రారంభమవుతుంది.'
+                  : 'వంటగది తాత్కాలికంగా నిలిపివేయబడింది. దయచేసి కొద్దిసేపటి తర్వాత ప్రయత్నించండి.'
+              : status.displayMessage)
+          : (isTe
+              ? 'వంటగది ప్రస్తుతం మూసివేయబడింది. తదుపరి అందుబాటులో ఉన్న రోజు మరియు సమయానికి ముందస్తు ఆర్డర్ చేయండి.'
+              : status.message);
+
+  final backgroundColor = isAvailable
+      ? const Color(0xFFE3F4E8)
+      : isPaused
+          ? const Color(0xFFFFF3D6)
+          : const Color(0xFFFDE8DD);
+
+  final borderColor = isAvailable
+      ? const Color(0xFFB8E2C4)
+      : isPaused
+          ? const Color(0xFFF2D28A)
+          : const Color(0xFFF3C6B2);
+
+  final foregroundColor = isAvailable
+      ? const Color(0xFF238447)
+      : isPaused
+          ? const Color(0xFF946200)
+          : const Color(0xFF9A3412);
+
+  final icon = isAvailable
+      ? Icons.check_circle_outline
+      : isPaused
+          ? Icons.pause_circle_outline
+          : Icons.access_time;
+
+  return Container(
+    width: double.infinity,
+    margin: const EdgeInsets.only(bottom: 6),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: borderColor),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          icon,
+          color: foregroundColor,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            message,
+            style: TextStyle(
+              fontSize: 13.5,
+              height: 1.4,
+              fontWeight: FontWeight.w600,
+              color: foregroundColor,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _buildCategories(bool isTe) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      CategoryChips(
+        categories: _cats,
+        showAll: false,
+        selected: _selectedCategory,
+        onSelected: (category) {
+          setState(() => _selectedCategory = category);
+        },
+      ),
+       const SizedBox(height: 10),
+
+      _buildKitchenStatus(isTe),
+
+    ],
+  );
+}
+  
 
   /// Displays the most recent order belonging to the logged-in customer.
   ///

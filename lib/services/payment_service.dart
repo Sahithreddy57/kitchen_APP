@@ -292,10 +292,18 @@ import '../models/order.dart';
 class CreatedOrder {
   final String id;
   final String orderNumber;
+  final String status;
+  final int payableAmount;
+  final String currency;
+  final DateTime? paymentExpiresAt;
 
   const CreatedOrder({
     required this.id,
     required this.orderNumber,
+    required this.status,
+    required this.payableAmount,
+    required this.currency,
+    this.paymentExpiresAt,
   });
 }
 
@@ -324,7 +332,7 @@ class PaymentResult {
 }
 
 class PaymentService {
-  /// MOCK ONLY. This does not charge a real payment method.
+  /// MOCK ONLY. Does not charge a real payment method.
   Future<PaymentResult> startPayment(PaymentRequest request) async {
     await Future.delayed(const Duration(milliseconds: 1500));
 
@@ -334,29 +342,51 @@ class PaymentService {
     );
   }
 
-  /// MOCK ONLY. This does not verify an actual payment.
+  /// MOCK ONLY. Does not verify an actual payment.
   Future<bool> confirmPayment(String txnId) async {
     await Future.delayed(const Duration(milliseconds: 1200));
     return true;
   }
 
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
+    return <String, dynamic>{};
+  }
+
+  int _parseAmount(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    if (value is String) {
+      return num.tryParse(value)?.round() ?? 0;
+    }
+    return 0;
+  }
+
+  DateTime? _parseDateTime(dynamic value) {
+    if (value == null) return null;
+
+    return DateTime.tryParse(value.toString());
+  }
+
   /// Builds one item for the backend order API.
   ///
   /// HUNDI and WEEKLY_HUNDI:
-  ///   item_type, hundi_package_id, quantity
+  /// item_type, hundi_package_id, quantity
   ///
   /// Regular products:
-  ///   product_id, variant_id, quantity
+  /// product_id, variant_id, quantity
   Map<String, dynamic> _buildOrderItem(dynamic line) {
     final dish = line.dish;
     final option = line.option;
     final quantity = line.qty as int;
 
-    final itemType = dish.orderItemType as String;
+    final itemType = (dish.orderItemType ?? 'PRODUCT')
+        .toString()
+        .toUpperCase();
 
     if (itemType == 'HUNDI' || itemType == 'WEEKLY_HUNDI') {
-      // Hundi option.id must be the actual MongoDB package _id,
-      // not the synthetic dish ID such as "hundi-muttonhundi".
       final packageId = option.id.toString().trim();
 
       if (packageId.isEmpty) {
@@ -373,7 +403,6 @@ class PaymentService {
       };
     }
 
-    // Keep the existing regular-product payload unchanged.
     final productId = dish.id.toString().trim();
     final variantId = option.id.toString().trim();
 
@@ -402,15 +431,11 @@ class PaymentService {
     final normalizedKey = idempotencyKey.trim();
 
     if (normalizedCustomerId.isEmpty) {
-      throw Exception(
-        'Customer ID is missing. Please sign in again.',
-      );
+      throw Exception('Customer ID is missing. Please sign in again.');
     }
 
     if (normalizedToken.isEmpty) {
-      throw Exception(
-        'Authentication token is missing. Please sign in again.',
-      );
+      throw Exception('Authentication token is missing. Please sign in again.');
     }
 
     if (normalizedKey.isEmpty) {
@@ -431,7 +456,6 @@ class PaymentService {
     }
 
     final uri = Uri.parse('$apiBaseUrl$kCreateOrderPath');
-
     final orderType = draft.isOrderNow ? 'ORDER_NOW' : 'PRE_ORDER';
 
     final body = <String, dynamic>{
@@ -447,7 +471,9 @@ class PaymentService {
 
     debugPrint('CREATE ORDER URL: $uri');
     debugPrint('CREATE ORDER TYPE: $orderType');
-    debugPrint('CREATE ORDER BODY: ${jsonEncode(body)}');
+
+    // Avoid logging customer tokens or sensitive customer information.
+    debugPrint('CREATE ORDER: submitting ${draft.lines.length} items.');
 
     final response = await http.post(
       uri,
@@ -461,7 +487,6 @@ class PaymentService {
     );
 
     debugPrint('ORDER API STATUS: ${response.statusCode}');
-    debugPrint('ORDER API RESPONSE: ${response.body}');
 
     dynamic decoded;
 
@@ -477,33 +502,69 @@ class PaymentService {
       switch (response.statusCode) {
         case 400:
           throw Exception(
-            'Order request is invalid (400).'
-            '${message == null ? '' : ' Server message: $message'}',
+            message ?? 'Order request is invalid (400).',
           );
 
         case 401:
           throw Exception(
-            'Order API returned 401 Unauthorized. '
-            'Check whether the customer token is valid.'
-            '${message == null ? '' : ' Server message: $message'}',
+            message ?? 'Session expired. Please sign in again.',
           );
 
         case 403:
           throw Exception(
-            'Order API returned 403 Forbidden.'
-            '${message == null ? '' : ' Server message: $message'}',
+            message ?? 'You are not allowed to place this order.',
           );
 
         case 422:
           throw Exception(
-            'Order request failed validation (422).'
-            '${message == null ? '' : ' Server message: $message'}',
+            message ?? 'Order request failed validation.',
           );
+
+        case 409:
+          final root = _asMap(decoded);
+          final data = _asMap(root['data']);
+
+          final errorCode = (
+            root['error_code'] ?? data['error_code'] ?? ''
+          ).toString().toUpperCase();
+
+          if (message != null) {
+            throw Exception(message);
+          }
+
+          switch (errorCode) {
+            case 'KITCHEN_PAUSED':
+              throw Exception(
+                "We're not accepting new orders right now. "
+                'Please try again shortly or place a pre-order.',
+              );
+
+            case 'STORE_CLOSED':
+              throw Exception(
+                "We're closed today. You can place a pre-order "
+                'for another day.',
+              );
+
+            case 'HUNDI_FULL':
+              throw Exception(
+                'Hundi bookings are full for this day. '
+                'Please select another date.',
+              );
+
+            case 'SLOT_FULL':
+              throw Exception(
+                'This time slot is full. Please select another slot.',
+              );
+
+            default:
+              throw Exception(
+                'Your order could not be placed. Please try again.',
+              );
+          }
 
         default:
           throw Exception(
-            'Order API failed (${response.statusCode}).'
-            '${message == null ? '' : ' Server message: $message'}',
+            message ?? 'Order API failed (${response.statusCode}).',
           );
       }
     }
@@ -514,20 +575,18 @@ class PaymentService {
       );
     }
 
-    Map<String, dynamic> asMap(dynamic value) {
-      if (value is Map) {
-        return Map<String, dynamic>.from(value);
-      }
-      return <String, dynamic>{};
-    }
-
-    final root = asMap(decoded);
-    final data = asMap(root['data']);
+    final root = _asMap(decoded);
+    final data = _asMap(root['data']);
     final result = data.isNotEmpty ? data : root;
 
-    final nestedOrder = asMap(result['order']);
-    final orderData = nestedOrder.isNotEmpty ? nestedOrder : result;
-    final rootOrder = asMap(root['order']);
+    final nestedOrder = _asMap(result['order']);
+    final rootOrder = _asMap(root['order']);
+
+    final orderData = nestedOrder.isNotEmpty
+        ? nestedOrder
+        : rootOrder.isNotEmpty
+            ? rootOrder
+            : result;
 
     final orderId = orderData['order_id'] ??
         orderData['id'] ??
@@ -535,9 +594,6 @@ class PaymentService {
         result['order_id'] ??
         result['id'] ??
         result['_id'] ??
-        rootOrder['order_id'] ??
-        rootOrder['id'] ??
-        rootOrder['_id'] ??
         root['order_id'] ??
         root['id'] ??
         root['_id'];
@@ -551,39 +607,93 @@ class PaymentService {
         result['orderNumber'] ??
         result['order_no'] ??
         result['orderNo'] ??
-        result['number'] ??
-        rootOrder['order_number'] ??
-        rootOrder['orderNumber'] ??
         root['order_number'] ??
-        root['orderNumber'] ??
-        root['order_no'] ??
-        root['orderNo'];
+        root['orderNumber'];
+
+    final status = (
+      orderData['status'] ??
+      result['status'] ??
+      root['status'] ??
+      ''
+    ).toString().toUpperCase();
+
+   final backendAmount = _parseAmount(
+  orderData['payable_amount'] ??
+      orderData['payableAmount'] ??
+      result['payable_amount'] ??
+      result['payableAmount'] ??
+      root['payable_amount'] ??
+      root['payableAmount'],
+);
+
+// Temporary fallback for mock payment when the backend
+// does not return payable_amount.
+final payableAmount = backendAmount > 0
+    ? backendAmount
+    : _parseAmount(draft.total);
+    final currency = (
+      orderData['currency'] ??
+      result['currency'] ??
+      root['currency'] ??
+      'INR'
+    ).toString();
+
+    final expiresAt = _parseDateTime(
+      orderData['payment_expires_at'] ??
+          orderData['paymentExpiresAt'] ??
+          result['payment_expires_at'] ??
+          result['paymentExpiresAt'],
+    );
 
     if (orderId == null || orderId.toString().trim().isEmpty) {
-      throw Exception(
-        'Order response did not contain an order ID.',
-      );
+      throw Exception('Order response did not contain an order ID.');
     }
 
     final parsedOrderNumber = orderNumber?.toString().trim() ?? '';
 
-    debugPrint('PARSED ORDER ID: $orderId');
-    debugPrint(
-      'PARSED ORDER NUMBER: '
-      '${parsedOrderNumber.isEmpty ? '(not returned by API)' : parsedOrderNumber}',
-    );
+   const allowedStatuses = {
+  'NEW',
+  'PAYMENT_PENDING',
+};
+
+if (!allowedStatuses.contains(status)) {
+  throw Exception(
+    'Unexpected order status: ${status.isEmpty ? 'missing' : status}.',
+  );
+}
+
+    if (payableAmount <= 0) {
+      throw Exception(
+        'The backend did not return a valid payable amount.',
+      );
+    }
+
+    debugPrint('ORDER CREATED: ${orderId.toString()}');
+    debugPrint('ORDER STATUS: $status');
+    debugPrint('ORDER AMOUNT: $payableAmount $currency');
 
     return CreatedOrder(
       id: orderId.toString(),
       orderNumber: parsedOrderNumber,
+      status: status,
+      payableAmount: payableAmount,
+      currency: currency,
+      paymentExpiresAt: expiresAt,
     );
   }
 
   String? _extractErrorMessage(dynamic decoded) {
     if (decoded is! Map) return null;
 
-    final value =
-        decoded['message'] ?? decoded['error'] ?? decoded['detail'];
+    final root = _asMap(decoded);
+    final data = _asMap(root['data']);
+
+    final value = root['message'] ??
+        root['error'] ??
+        root['detail'] ??
+        data['message'] ??
+        data['error'] ??
+        data['detail'];
 
     if (value == null) return null;
 

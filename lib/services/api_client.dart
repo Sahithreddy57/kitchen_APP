@@ -1,5 +1,4 @@
 
-
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -10,11 +9,17 @@ import '../core/api_config.dart';
 class ApiException implements Exception {
   final int? status;
   final String message;
+  final String? code;
 
-  ApiException(this.message, [this.status]);
+  ApiException(
+    this.message, [
+    this.status,
+    this.code,
+  ]);
 
   @override
-  String toString() => 'ApiException(${status ?? '-'}): $message';
+  String toString() =>
+      'ApiException(${status ?? '-'}, ${code ?? '-'}): $message';
 }
 
 class ApiResponse {
@@ -26,8 +31,15 @@ class ApiResponse {
   bool get ok =>
       status >= 200 && status < 300 && body['success'] != false;
 
+  /// Backend error code, for example MOBILE_NUMBER_ALREADY_USED.
+  String? get code {
+    final value = body['code']?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  /// Preserve the exact message returned by the backend.
   String get message =>
-      (body['message'] ?? body['error'] ?? '').toString().toLowerCase();
+      (body['message'] ?? body['error'] ?? '').toString();
 }
 
 class ApiClient {
@@ -42,23 +54,23 @@ class ApiClient {
     customerToken = null;
   }
 
-static Map<String, String> _headers({
-  bool authenticated = false,
-}) {
-  final String? token;
+  static Map<String, String> _headers({
+    bool authenticated = false,
+  }) {
+    final String? token;
 
-  if (authenticated) {
-    token = customerToken;
-  } else {
-    token = kDevApiToken.isNotEmpty ? kDevApiToken : null;
+    if (authenticated) {
+      token = customerToken;
+    } else {
+      token = kDevApiToken.isNotEmpty ? kDevApiToken : null;
+    }
+
+    return {
+      'Accept': 'application/json',
+      if (token != null && token.isNotEmpty)
+        'Authorization': 'Bearer $token',
+    };
   }
-
-  return {
-    'Accept': 'application/json',
-    if (token != null && token.isNotEmpty)
-      'Authorization': 'Bearer $token',
-  };
-}
 
   static Future<Map<String, dynamic>> getJson(
     String path, {
@@ -95,78 +107,67 @@ static Map<String, String> _headers({
       }
     }
 
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw ApiException('HTTP ${res.statusCode}', res.statusCode);
-    }
+    final response = _parseResponse(res);
 
-    final decoded = jsonDecode(utf8.decode(res.bodyBytes));
-
-    if (decoded is! Map) {
-      throw ApiException('Unexpected response format');
-    }
-
-    final body = Map<String, dynamic>.from(decoded);
-
-    if (body['success'] == false) {
+    if (!response.ok) {
       throw ApiException(
-        (body['message'] ?? 'Request failed').toString(),
-        res.statusCode,
+        response.message.isNotEmpty
+            ? response.message
+            : 'HTTP ${res.statusCode}',
+        response.status,
+        response.code,
       );
     }
 
-    return body;
+    return response.body;
   }
 
-  /// POST JSON. OTP values and authorization headers are never logged.
- 
+  /// POST JSON. Never log OTPs, tokens, or request bodies.
+  static Future<ApiResponse> postJson(
+    String path,
+    Map<String, dynamic> body, {
+    bool authenticated = false,
+  }) async {
+    final uri = Uri.parse('$apiBaseUrl$path');
+    final http.Response res;
 
-/// POST JSON. Never log OTPs, tokens, or request bodies.
-static Future<ApiResponse> postJson(
-  String path,
-  Map<String, dynamic> body, {
-  bool authenticated = false,
-}) async {
-  final uri = Uri.parse('$apiBaseUrl$path');
-  final http.Response res;
-
-  try {
-    res = await http
-        .post(
-          uri,
-          headers: {
-            ..._headers(authenticated: authenticated),
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 15));
-  } on Exception catch (e) {
-    debugPrint('POST $uri failed: $e');
-    throw ApiException('Could not reach the server');
-  }
-
-  final responseText = utf8.decode(res.bodyBytes);
-
-  if (kDebugMode) {
-    debugPrint('POST $uri -> ${res.statusCode}');
-    debugPrint(
-      'Response: ${responseText.length > 1000 ? responseText.substring(0, 1000) : responseText}',
-    );
-  }
-
-  Map<String, dynamic> parsed = {};
-
-  try {
-    final decoded = jsonDecode(responseText);
-    if (decoded is Map) {
-      parsed = Map<String, dynamic>.from(decoded);
+    try {
+      res = await http
+          .post(
+            uri,
+            headers: {
+              ..._headers(authenticated: authenticated),
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 15));
+    } on Exception catch (e) {
+      debugPrint('POST $uri failed: $e');
+      throw ApiException('Could not reach the server');
     }
-  } catch (_) {
-    // The server may return a non-JSON error page.
-  }
 
-  return ApiResponse(res.statusCode, parsed);
-}
+    final responseText = utf8.decode(res.bodyBytes);
+
+    if (kDebugMode) {
+      debugPrint('POST $uri -> ${res.statusCode}');
+      // Avoid logging response bodies because they may contain tokens or
+      // other sensitive customer information.
+    }
+
+    Map<String, dynamic> parsed = {};
+
+    try {
+      final decoded = jsonDecode(responseText);
+      if (decoded is Map) {
+        parsed = Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {
+      // The server may return a non-JSON error page.
+    }
+
+    return ApiResponse(res.statusCode, parsed);
+  }
 
   /// PUT JSON.
   static Future<ApiResponse> putJson(
@@ -311,5 +312,3 @@ static Future<ApiResponse> postJson(
     return null;
   }
 }
-
-

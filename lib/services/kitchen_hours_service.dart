@@ -3,15 +3,6 @@
 import '../core/api_config.dart';
 import 'api_client.dart';
 
-/// Kitchen hours for one selected date.
-///
-/// Weekly backend response example:
-/// {
-///   "day": "Monday",
-///   "is_open": true,
-///   "open_time": "14:00",
-///   "close_time": "21:00"
-/// }
 class KitchenHours {
   final String date;
   final bool isOpen;

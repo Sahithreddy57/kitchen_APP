@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 const bool kUseMockMenu = false;
 ///flutter run --dart-define=DEV_API_TOKEN=paste_your_token_here
 
-///flutter run --dart-define=DEV_API_TOKEN=paste_your_token_here
+///a
 /// Testing on a REAL phone? Put your computer's Wi-Fi IP here.
 /// Phone and computer must be on the same Wi-Fi.
 const String kApiHostOverride = '192.168.1.65';
@@ -88,3 +88,5 @@ const bool kUseMockAuth = false;
 /// Customer order cancellation endpoint
 /// POST /api/customer/orders/:id/cancel
 const String kCancelOrderPath = '/api/customer/orders';
+const String kCustomerOrdersByMobilePath =
+    '/api/customer/orders/by-mobile';
